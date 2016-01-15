@@ -382,7 +382,8 @@ int BSP_setup_the_pic(rtems_irq_global_settings* config)
      * bit 10:GPP interrupts as level sensitive(1) or edge sensitive(0).
      * MOTload default is set as level sensitive(1). Set it agin to make sure.
      */
-    out_le32(GT_CommUnitArb_Ctrl, (in_le32(GT_CommUnitArb_Ctrl)| (1<<10)));
+    out_le32((volatile unsigned int *)GT_CommUnitArb_Ctrl,
+             (in_le32((volatile unsigned int *)GT_CommUnitArb_Ctrl)| (1<<10)));
 
 #if 0
     printk("BSP_irqMask_reg[0] = 0x%x, BSP_irqCause_reg[0] 0x%x\n", 
@@ -442,7 +443,7 @@ int C_dispatch_irq_handler (BSP_Exception_frame *frame, unsigned int excNum)
 {
   unsigned long irqCause[3]={0, 0,0};
   unsigned oldMask[3]={0,0,0};
-  int loop=0, wloop=0, i=0, j;
+  int loop=0, i=0, j;
   int irq=0, group=0;
 
   if (excNum == ASM_DEC_VECTOR) {
@@ -479,7 +480,7 @@ int C_dispatch_irq_handler (BSP_Exception_frame *frame, unsigned int excNum)
 }
 
 /* Only print part of the entries for now */
-void BSP_printPicIsrTbl()
+void BSP_printPicIsrTbl(void)
 {
   int i;
 

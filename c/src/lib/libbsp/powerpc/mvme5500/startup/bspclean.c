@@ -2,6 +2,7 @@
  *                    NSLS,Brookhaven National Laboratory
  */
 #include <bsp.h>
+#include <bsp/bootcard.h>
 #include <rtems/bspIo.h>
 #include <libcpu/stackTrace.h>
 
@@ -11,8 +12,6 @@ void bsp_cleanup(void)
 {
 #if AUTO_BOOT
   /* Till Straumann <strauman@slac.stanford.edu> for SVGM */
-  void bsp_reset();
-
   bsp_reset();
 #else
   /* Kate Feng <feng1@bnl.gov> for the MVME5500 */

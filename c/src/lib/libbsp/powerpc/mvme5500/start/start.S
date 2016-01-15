@@ -4,13 +4,14 @@
  *  Copyright (C) 1999 Eric Valette. valette@crf.canon.fr
  *
  *  S. Kate Feng <feng1@bnl.gov>, April 2004
- *  Mapped the 2nd 256MB of RAM to support the MVME5500 boards.
- *
+ *  Mapped the 2nd 256MB of RAM to support the MVME5500/MVME6100 boards
+ *	
  *  The license and distribution terms for this file may be
  *  found in the file LICENSE in this distribution or at
  *  http://www.rtems.com/license/LICENSE.
  *
- * 
+ *  $Id: start.S,v 1.26 2009/12/02 01:51:22 strauman Exp $
+ *
  */
 
 #include <rtems/asm.h>
@@ -18,6 +19,7 @@
 #include <rtems/powerpc/powerpc.h>
 #include <libcpu/io.h>
 #include <libcpu/bat.h>
+#include <bspopts.h>
 
 #define SYNC \
 	sync; \
@@ -25,7 +27,7 @@
 
 #define KERNELBASE	0x0
 #define MEM256MB        0x10000000
-	
+
 #define MONITOR_ENTER			\
 	mfmsr	r10		;	\
 	ori	r10,r10,MSR_IP	;	\
@@ -33,20 +35,19 @@
 	li	r10,0x63	;	\
 	sc
 
-		
 	.text
 	.globl	__rtems_entry_point
 	.type	__rtems_entry_point,@function
 __rtems_entry_point:
 #ifdef DEBUG_EARLY_START
 	MONITOR_ENTER
-#endif	
-		
-/* 
+#endif
+
+/*
  * PREP
  * This is jumped to on prep systems right after the kernel is relocated
  * to its proper place in memory by the boot loader.  The expected layout
- * of the regs is:	
+ * of the regs is:
  *   r3: ptr to residual data
  *   r4: initrd_start or if no initrd then 0
  *   r5: initrd_end - unused if r4 is 0
@@ -56,12 +57,27 @@ __rtems_entry_point:
  *   The Prep boot loader insure that the MMU is currently off...
  *
  */
-	
+
 	mr	r31,r3			/* save parameters */
 	mr	r30,r4
 	mr	r29,r5
 	mr	r28,r6
 	mr	r27,r7
+
+#ifdef __ALTIVEC__
+	/* enable altivec; gcc may use it! */
+	mfmsr r0
+	oris  r0, r0, (1<<(31-16-6))
+	mtmsr r0
+	/*
+	 * set vscr and vrsave to known values
+	 */
+	li    r0, 0
+	mtvrsave r0
+	vxor   0,0,0
+	mtvscr 0
+#endif
+
 	/*
 	 * Make sure we have nothing in BATS and TLB
 	 */
@@ -69,10 +85,11 @@ __rtems_entry_point:
 	bl	flush_tlbs
 /*
  * Use the first pair of BAT registers to map the 1st 256MB
- * of RAM to KERNELBASE. 
+ * of RAM to KERNELBASE.
  */
 	lis	r11,KERNELBASE@h
-	ori	r11,r11,0x1ffe		/* set up BAT0 registers for 604+ */
+/* set up BAT registers for 604 */
+	ori	r11,r11,0x1ffe
 	li	r8,2			/* R/W access */
 	isync
 	mtspr	DBAT0L,r8		/* N.B. 6xx (not 601) have valid */
@@ -81,8 +98,8 @@ __rtems_entry_point:
 	mtspr	IBAT0U,r11
 	isync
 /*
- * Use the 2nd pair of BAT registers to map the 2nd 256MB
- * of RAM to 0x10000000. <SKF>
+ * <skf> Use the 2nd pair of BAT registers to map the 2nd 256MB
+ * of RAM to 0x10000000.
  */
 	lis	r11,MEM256MB@h
 	ori	r11,r11,0x1ffe		/* set up BAT1 registers for 604+ */
@@ -92,18 +109,18 @@ __rtems_entry_point:
 	mtspr	DBAT1L,r8		/* N.B. 6xx (not 601) have valid */
 	mtspr	DBAT1U,r11		/* bit in upper BAT register */
 	mtspr	IBAT1L,r8
-	mtspr	IBAT1U,r11	
+	mtspr	IBAT1U,r11
 	isync
 
 /*
- * we now have the two 256M of ram mapped with the bats. We are still 
- * running on the bootloader stack and cannot switch to an RTEMS allocated 
+ * we now have the two 256M of ram mapped with the bats. We are still
+ * running on the bootloader stack and cannot switch to an RTEMS allocated
  * init stack before copying the residual data that may have been set just
  * after rtems_end address. This bug has been experienced on MVME2304. Thank
  * to Till Straumann <strauman@SLAC.Stanford.EDU> for hunting it and
  * suggesting the appropriate code.
  */
-	
+
 enter_C_code:
 	bl	MMUon
 	bl  __eabi	/* setup EABI and SYSV environment */
@@ -115,33 +132,36 @@ enter_C_code:
 	mr	r4,r30
 	mr	r5,r29
 	mr	r6,r28
-	mr	r7,r27 
+	mr	r7,r27
 	bl	save_boot_params
 	/*
 	 * stack = &__rtems_end + 4096
 	 */
-	addis	r9,r0, __rtems_end+(4096-PPC_MINIMUM_STACK_FRAME_SIZE)@ha
-        addi	r9,r9, __rtems_end+(4096-PPC_MINIMUM_STACK_FRAME_SIZE)@l
-	mr	r1, r9
+	addis	r9,r0, __stack-PPC_MINIMUM_STACK_FRAME_SIZE@ha
+	addi	r9,r9, __stack-PPC_MINIMUM_STACK_FRAME_SIZE@l
 	/*
-	 * We are know in a environment that is totally independent from bootloader setup.
+	 * align initial stack
+	 * (we hope that the bootloader stack was 16-byte aligned
+	 * or we haven't used altivec yet...)
 	 */
-        lis	r5,environ@ha
-        la	r5,environ@l(r5)	/* environp */
-	li	r4, 0			/* argv */
-	li	r3, 0			/* argc */
+	li   r0, (CPU_STACK_ALIGNMENT-1)
+	andc r1, r9, r0
+	/*
+	 * We are now in a environment that is totally independent from
+	 * bootloader setup.
+	 */
+    /* pass result of 'save_boot_params' to 'boot_card' in R3 */
 	bl	boot_card
 	bl	_return_to_ppcbug
-	
+
 	.globl  MMUon
 	.type	MMUon,@function
-MMUon:	
+MMUon:
 	mfmsr	r0
-#if (PPC_HAS_FPU == 0)
 	ori	r0,r0, MSR_IP | MSR_RI | MSR_IR | MSR_DR | MSR_EE | MSR_FE0 | MSR_FE1 | MSR_FP
+#if (PPC_HAS_FPU == 0)
 	xori	r0, r0, MSR_EE | MSR_IP | MSR_FP
 #else
-	ori	r0,r0, MSR_IP | MSR_RI | MSR_IR | MSR_DR | MSR_EE | MSR_FE0 | MSR_FE1 | MSR_FP
 	xori	r0, r0, MSR_EE | MSR_IP | MSR_FE0 | MSR_FE1
 #endif
 	mflr	r11
@@ -149,10 +169,10 @@ MMUon:
 	mtsrr1	r0
 	SYNC
 	rfi
-	
+
 	.globl  MMUoff
 	.type	MMUoff,@function
-MMUoff:	
+MMUoff:
 	mfmsr	r0
 	ori	r0,r0,MSR_IR| MSR_DR | MSR_IP
 	mflr	r11
@@ -165,14 +185,13 @@ MMUoff:
 	.globl	_return_to_ppcbug
 	.type	_return_to_ppcbug,@function
 
-	
 _return_to_ppcbug:
 	mflr	r30
 	bl	MMUoff
 	MONITOR_ENTER
 	bl	MMUon
 	mtctr	r30
-	bctr	
+	bctr
 
 flush_tlbs:
 	lis	r20, 0x1000

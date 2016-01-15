@@ -64,6 +64,12 @@
 
 #define ADDR_PIPELINE 0x00020000
 
+#define CPU0_SYNC_TRIGGER   0xD0  /* CPU0 Sync Barrier trigger */
+#define CPU0_SYNC_VIRTUAL   0xC0  /* CPU0 Sync Barrier Virtual */
+
+#define CPU1_SYNC_TRIGGER   0xD8  /* CPU1 Sync Barrier trigger */
+#define CPU1_SYNC_VIRTUAL   0xC8  /* CPU1 Sync Barrier Virtual */
+
 void  pciAccessInit(void);
 
 void pci_interface(void)
@@ -94,5 +100,24 @@ void pciAccessInit(void)
       printf("PCI%d_ACCESS_CNTL_BASE0_LOW now 0x%x\n",PciLocal,in_le32((volatile unsigned int *)(GT64x60_REG_BASE+PCI0_ACCESS_CNTL_BASE0_LOW+(PciLocal * 0x80)))); 
 #endif
   }
+}
+
+/* Sync Barrier Trigger. A write to the CPU_SYNC_TRIGGER register triggers
+ * the sync barrier process.  The three bits, define which buffers should
+ * be flushed.
+ * Bit 0 = PCI0 slave write buffer.
+ * Bit 1 = PCI1 slave write buffer.
+ * Bit 2 = SDRAM snoop queue.
+ */
+void CPU0_PciEnhanceSync(unsigned int syncVal)
+{
+  out_le32((volatile unsigned int *)(GT64x60_REG_BASE+CPU0_SYNC_TRIGGER), syncVal);
+  while(in_le32((volatile unsigned int *)(GT64x60_REG_BASE+CPU0_SYNC_VIRTUAL)));
+}
+
+void CPU1_PciEnhanceSync(unsigned int syncVal)
+{
+  out_le32((volatile unsigned int *)(GT64x60_REG_BASE+CPU1_SYNC_TRIGGER), syncVal);
+  while(in_le32((volatile unsigned int *)(GT64x60_REG_BASE+CPU1_SYNC_VIRTUAL)));
 }
 

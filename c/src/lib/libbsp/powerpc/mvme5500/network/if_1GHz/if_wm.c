@@ -3,6 +3,10 @@
  *      under the Deaprtment of Energy contract DE-AC02-98CH10886
  *      Brookhaven National Laboratory, All rights reserved
  *
+ * Copyright (c) 2014 : Kate Feng <kate007.feng@gmail.com>,  All rights reserved
+ * Added supports for the 82545GM Gigabit Ethernet
+ * (Porting version : NetBSD: if_wm.c,v 1.162.4.19 2013/09/07 17:10:18 bouyer Exp)
+ *
  * Acknowledgements:
  * netBSD : Copyright (c) 2001, 2002, 2003, 2004 Wasabi Systems, Inc.
  *          Jason R. Thorpe for Wasabi Systems, Inc.
@@ -77,6 +81,9 @@
 #include <bsp/pci.h>
 #include <bsp/pcireg.h>
 #include <bsp/if_wmreg.h>
+
+extern int pci_mem_find(int b, int d, int f, int reg, unsigned *basep,unsigned *sizep);
+
 #define	WMREG_RADV	0x282c	/* Receive Interrupt Absolute Delay Timer */
 
 #define	ETHERTYPE_FLOWCONTROL	0x8808	/* 802.3x flow control packet */
@@ -149,6 +156,10 @@ struct wm_softc {
         unsigned sc_memsize;	        /* Memory space size */
 
 	char	dv_xname[16];		/* external name (name + unit) */
+
+        unsigned int deviceId;
+        unsigned int deviceName[16];
+
 	void *sc_sdhook;		/* shutdown hook */
         struct arpcom arpcom;	        /* rtems if structure, contains ifnet */
 	int sc_flags;			/* flags; see below */
@@ -285,6 +296,7 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
   int unit;
   void	   *softc_mem;
   char     *name;
+  unsigned short id;
 
   unit = rtems_bsdnet_parse_driver_name(config, &name);
   if (unit < 0) return 0;
@@ -293,31 +305,48 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
      memcpy(name,"gtGHz",5);
           
   printk("\nAttaching MVME5500 1GHz NIC%d\n", unit); 
-  printk("RTEMS-mvme5500 BSP Copyright (c) 2004,2005,2008, Brookhaven National Lab., Shuchen Kate Feng \n");
+  printk("RTEMS-mvme5500 BSP Copyright (c) 2004,2005,2008,2014, Shuchen Kate Feng \n");
 
   /* Make sure certain elements e.g. descriptor lists are aligned.*/ 
   softc_mem = rtems_bsdnet_malloc(sizeof(*sc) + SOFTC_ALIGN, M_FREE, M_NOWAIT);
 
   /* Check for the very unlikely case of no memory. */
   if (softc_mem == NULL)
-     rtems_panic("i82544EI: OUT OF MEMORY");
+     rtems_panic("1GHz network driver: OUT OF MEMORY");
 
   sc = (void *)(((long)softc_mem + SOFTC_ALIGN) & ~SOFTC_ALIGN);
   memset(sc, 0, sizeof(*sc));
 
   sprintf(sc->dv_xname, "%s%d", name, unit);
 
-  if (pci_find_device(PCI_VENDOR_ID_INTEL,PCI_DEVICE_INTEL_82544EI_COPPER,
-			unit-1,&b, &d, &f))
-    rtems_panic("i82544EI device ID not found\n");
+  if (BSP_pciFindDevice(PCI_VENDOR_ID_INTEL, &id, unit, &b, &d, &f))
+     rtems_panic("Intel Ethernet device ID not found. Please contact the author\n");
+  else {
+    sc->deviceId = id;
+    switch(id){
+    case PCI_DEVICE_INTEL_82544EI_COPPER:
+      strcpy((char *) sc->deviceName, "i82544EI");
+      break;
+    case PCI_DEVICE_INTEL_82545GM_COPPER:
+      strcpy((char *) sc->deviceName, "i82545GM-COPPER");
+      break;
+    case PCI_DEVICE_INTEL_82545GM_FIBER:
+      strcpy((char *) sc->deviceName, "i82545GM-FIBER");
+      break;
+    default:
+      printk("Intel Ethernet device ID 0x%x .", id);
+      rtems_panic("It is not supported yet. Please contact the author\n");
+      break;
+    }
+  }
 
 #ifdef WM_DEBUG
-  printk("82544EI:b%d, d%d, f%d\n", b, d,f);
+  printk("%s:b%d, d%d, f%d\n", sc->deviceName, b, d,f);
 #endif
 
   /* Memory-mapped acccess is required for normal operation.*/
   if ( pci_mem_find(b,d,f,PCI_MAPREG_START, &sc->sc_membase, &sc->sc_memsize))
-     rtems_panic("i82544EI: unable to map memory space\n");
+     rtems_panic("1GHz network driver : unable to map memory space\n");
 
 #ifdef WM_DEBUG 
   printk("Memory base addr 0x%x\n", sc->sc_membase);
@@ -345,8 +374,21 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
   /*
    * Setup some information about the EEPROM.
    */
-
-  sc->sc_ee_addrbits = 6;
+  switch (sc->deviceId) {
+  case PCI_DEVICE_INTEL_82544EI_COPPER:
+    sc->sc_ee_addrbits = 6;
+    break;
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+    /* Microwire */
+    reg = CSR_READ(sc, WMREG_EECD);
+    if (reg & EECD_EE_SIZE)
+       sc->sc_ee_addrbits = 8;
+    else
+       sc->sc_ee_addrbits = 6;
+    sc->sc_flags |= WM_F_EEPROM_HANDSHAKE;
+    break;
+  }
 
 #ifdef WM_DEBUG
   printk("%s%d: %u word (%d address bits) MicroWire EEPROM\n",
@@ -359,7 +401,7 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
    */
   if (wm_read_eeprom(sc, EEPROM_OFF_MACADDR,
 	    sizeof(myea) / sizeof(myea[0]), myea)) 
-     rtems_panic("i82544ei 1GHZ ethernet: unable to read Ethernet address");
+     rtems_panic("1GHz ethernet: unable to read Ethernet address");
 
   enaddr[0] = myea[0] & 0xff;
   enaddr[1] = myea[0] >> 8;
@@ -447,7 +489,7 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
   /* create the synchronization semaphore */
   if (RTEMS_SUCCESSFUL != rtems_semaphore_create(
      rtems_build_name('I','G','H','Z'),0,0,0,&sc->daemonSync))
-     rtems_panic("i82544EI: semaphore creation failed");
+     rtems_panic("1GHz ethernet: semaphore creation failed");
 
   i82544IrqData.handle= (rtems_irq_hdl_param) sc;
   /* sc->next_module = root_i82544EI_dev;*/
@@ -457,7 +499,8 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
   if_attach(ifp);
   ether_ifattach(ifp);
 #ifdef WM_DEBUG
-  printk("82544EI: Ethernet driver has been attached (handle 0x%08x,ifp 0x%08x)\n",sc, ifp);
+  printk("%s: Ethernet driver has been attached (handle 0x%08x,ifp 0x%08x)\n", sc->deviceName,
+         sc, ifp);
 #endif
 
   return(1);
@@ -466,7 +509,7 @@ int rtems_i82544EI_driver_attach(struct rtems_bsdnet_ifconfig *config, int attac
 /*
  * wm_reset:
  *
- *	Reset the i82544 chip.
+ *      Reset the i82544/i82545GM chip.
  */
 static void wm_reset(struct wm_softc *sc)
 {
@@ -483,8 +526,26 @@ static void wm_reset(struct wm_softc *sc)
   sc->sc_pba = sc->arpcom.ac_if.if_mtu > 8192 ? PBA_40K : PBA_48K;
   CSR_WRITE(sc, WMREG_PBA, sc->sc_pba);
 
+  /* Clear interrupt */
+  CSR_WRITE(sc, WMREG_IMC, 0xffffffffU);
+
+  /* Stop the transmit and receive processes. */
+  CSR_WRITE(sc, WMREG_RCTL, 0);
+  CSR_WRITE(sc, WMREG_TCTL, TCTL_PSP);
+  sc->sc_rctl &= ~RCTL_EN;
+  rtems_bsp_delay(10000); /* 10 msec */
+
   /* device reset */
-  CSR_WRITE(sc, WMREG_CTRL, CTRL_RST);
+  switch (sc->deviceId) {
+  case PCI_DEVICE_INTEL_82544EI_COPPER:
+    CSR_WRITE(sc, WMREG_CTRL, CTRL_RST);
+    break;
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+    /* Use the shadow control register on these chips. */
+    CSR_WRITE(sc, WMREG_CTRL_SHADOW, CTRL_RST);
+    break;
+  }
   rtems_bsp_delay(10000);
 
   for (i = 0; i < 1000; i++) {
@@ -493,14 +554,29 @@ static void wm_reset(struct wm_softc *sc)
       rtems_bsp_delay(20);
   }
   if (CSR_READ(sc, WMREG_CTRL) & CTRL_RST)
-      printk("Intel 82544 1GHz reset failed to complete\n");
+      printk("1GHz NIC reset failed to complete\n");
 
-  sc->sc_ctrl_ext = CSR_READ(sc,WMREG_CTRL_EXT);
-  sc->sc_ctrl_ext |= CTRL_EXT_EE_RST;
-  CSR_WRITE(sc, WMREG_CTRL_EXT, sc->sc_ctrl_ext);  
-  CSR_READ(sc, WMREG_STATUS);
-  /* Wait for EEPROM reload */
-  rtems_bsp_delay(2000);
+  /* reload EEPROM */
+  switch (sc->deviceId) {
+  case PCI_DEVICE_INTEL_82544EI_COPPER:
+    rtems_bsp_delay(10);
+    sc->sc_ctrl_ext = CSR_READ(sc,WMREG_CTRL_EXT);
+    sc->sc_ctrl_ext |= CTRL_EXT_EE_RST;
+    CSR_WRITE(sc, WMREG_CTRL_EXT, sc->sc_ctrl_ext);
+    CSR_READ(sc, WMREG_STATUS);
+    /* Wait for EEPROM reload */
+    rtems_bsp_delay(2000);
+    break;
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+    rtems_bsp_delay(5000);
+    break;
+  }
+
+  /* Clear any pending interrupt events. */
+  CSR_WRITE(sc, WMREG_IMC, 0xffffffffU);
+  CSR_READ(sc, WMREG_ICR);
+
   sc->sc_ctrl= CSR_READ(sc, WMREG_CTRL);
 }
 
@@ -935,7 +1011,18 @@ static int i82544EI_init_hw(struct wm_softc *sc)
   CSR_WRITE(sc,WMREG_TDLEN, sizeof(sc->sc_txdescs));
   CSR_WRITE(sc,WMREG_TDH, 0);
   CSR_WRITE(sc,WMREG_TDT, 0);
-  CSR_WRITE(sc,WMREG_TIDV, 0 ); 
+
+  switch(sc->deviceId){
+  case PCI_DEVICE_INTEL_82544EI_COPPER:
+    CSR_WRITE(sc,WMREG_TIDV, 0 );
+  /* CSR_WRITE(sc,WMREG_TADV, 128);  not for 82544 */
+    break;
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+    CSR_WRITE(sc, WMREG_TIDV, 375);             /* ITR / 4 */
+    CSR_WRITE(sc, WMREG_TADV, 375);             /* should be same */
+    break;
+  }
   /* CSR_WRITE(sc,WMREG_TADV, 128);  not for 82544 */
 
   CSR_WRITE(sc,WMREG_TXDCTL, TXDCTL_PTHRESH(0) |
@@ -987,9 +1074,17 @@ static int i82544EI_init_hw(struct wm_softc *sc)
   CSR_WRITE(sc,WMREG_RDLEN, sizeof(sc->sc_rxdescs));
   CSR_WRITE(sc,WMREG_RDH, 0);
   CSR_WRITE(sc,WMREG_RDT, 0);
-  CSR_WRITE(sc,WMREG_RDTR, 0 |RDTR_FPD); 
-  /* CSR_WRITE(sc, WMREG_RADV, 256);  not for 82544.  */
-
+  switch(sc->deviceId) {
+  case PCI_DEVICE_INTEL_82544EI_COPPER:
+    CSR_WRITE(sc,WMREG_RDTR, 0 |RDTR_FPD);
+    /* CSR_WRITE(sc, WMREG_RADV, 256);  not for 82544.  */
+    break;
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+    CSR_WRITE(sc, WMREG_RDTR, 375 | RDTR_FPD); /* ITR/4 */
+    CSR_WRITE(sc, WMREG_RADV, 375);     /* MUST be same */
+    break;
+  }
   for (i = 0; i < NRXDESC; i++) {
       if (sc->rxs_mbuf[i] == NULL) {
          if ((error = wm_add_rxbuf(sc, i)) != 0) {
@@ -1019,7 +1114,7 @@ static int i82544EI_init_hw(struct wm_softc *sc)
 
 #if 0
   /* Use MOTLoad default
-  /*
+   *
    * Set up flow-control parameters.
    */
   CSR_WRITE(sc,WMREG_FCAL, FCAL_CONST);/* same as MOTLOAD 0x00c28001 */
@@ -1077,13 +1172,35 @@ static int i82544EI_init_hw(struct wm_softc *sc)
 
   CSR_WRITE(sc,WMREG_IMS, sc->sc_icr);
 
+  switch(sc->deviceId){
+  case PCI_DEVICE_INTEL_82545GM_COPPER:
+  case PCI_DEVICE_INTEL_82545GM_FIBER:
+       /*
+        * Set up the interrupt throttling register (units of 256ns)
+        * Note that a footnote in Intel's documentation says this
+        * ticker runs at 1/4 the rate when the chip is in 100Mbit
+        * or 10Mbit mode.  Empirically, it appears to be the case
+        * that that is also true for the 1024ns units of the other
+        * interrupt-related timer registers -- so, really, we ought
+        * to divide this value by 4 when the link speed is low.
+        *
+        * XXX implement this division at link speed change!
+        */
+
+        /*
+         * For N interrupts/sec, set this value to:
+         * 1000000000 / (N * 256).  Note that we set the
+         * absolute and packet timer values to this value
+         * divided by 4 to get "simple timer" behavior.
+         */
+         CSR_WRITE(sc, WMREG_ITR, 1500);        /* 2604 ints/sec */
+  }
+
   /* Set up the inter-packet gap. */
   CSR_WRITE(sc,WMREG_TIPG, sc->sc_tipg);
 
-#if 0 /* XXXJRT */
   /* Set the VLAN ethernetype. */
   CSR_WRITE(sc,WMREG_VET, ETHERTYPE_VLAN);
-#endif
 
   /*
    * Set up the transmit control register; we start out with
@@ -1137,16 +1254,16 @@ static int i82544EI_init_hw(struct wm_softc *sc)
 
   /* Map and establish our interrupt. */
   if (!BSP_install_rtems_irq_handler(&i82544IrqData))
-     rtems_panic("1GHZ ethernet: unable to install ISR");
+     rtems_panic("1GHZ Ethernet: unable to install ISR");
 
   return(0);
 }
 
-void BSP_rdTIDV()
+void BSP_rdTIDV(void)
 {
   printf("Reg TIDV: 0x%x\n", in_le32((volatile unsigned *) (BSP_1GHz_membase+WMREG_TIDV)));
 }
-void BSP_rdRDTR()
+void BSP_rdRDTR(void)
 {
   printf("Reg RDTR: 0x%x\n", in_le32((volatile unsigned *) (BSP_1GHz_membase+WMREG_RDTR)));
 }
@@ -1600,7 +1717,7 @@ static void i82544EI_error(struct wm_softc *sc)
   if ((++sc->if_err_ptr1)==IF_ERR_BUFSZE) sc->if_err_ptr1=0; /* Till Straumann */
 }
 
-void i82544EI_printStats()
+void i82544EI_printStats(void)
 {
   i82544EI_stats(root_i82544EI_dev);
 }
@@ -1714,6 +1831,7 @@ static void wm_gmii_reset(struct wm_softc *sc)
   CSR_WRITE(sc, WMREG_CTRL, sc->sc_ctrl);
   rtems_bsp_delay(20000);
 
+  rtems_bsp_delay(10000);
 }
 
 /*
@@ -1728,12 +1846,7 @@ static void wm_gmii_mediainit(struct wm_softc *sc)
   /* We have MII. */
   sc->sc_flags |= WM_F_HAS_MII;
 
-#if 1
-  /* <skf> May 2009 : The value that should be programmed into IPGT is 10 */
-  sc->sc_tipg = TIPG_IPGT(10)+TIPG_IPGR1(8)+TIPG_IPGR2(6); 
-#else
   sc->sc_tipg = TIPG_1000T_DFLT; /* 0x602008 */
-#endif
 
   /*
    * Let the chip set speed/duplex on its own based on

@@ -100,6 +100,10 @@ DiscoveryChipVersion BSP_getDiscoveryChipVersion();
 #define BSP_MAX_PCI_BUS_ON_PCI1 2
 #define BSP_MAX_PCI_BUS  (BSP_MAX_PCI_BUS_ON_PCI0+BSP_MAX_PCI_BUS_ON_PCI1)
 
+
+/* The glues to Till's vmeUniverse, although the name does not
+ * actually reflect the relevant architect of the MVME5500.
+ */
 #define BSP_PCI_IRQ0 BSP_GPP_IRQ_LOWEST_OFFSET
 
 /*
@@ -110,6 +114,8 @@ DiscoveryChipVersion BSP_getDiscoveryChipVersion();
 
 #define CONFIGURE_NUMBER_OF_TERMIOS_PORTS 2
 #define BSP_INTERRUPT_STACK_SIZE  (16 * 1024) /* <skf> 2/09 wants it to be adjustable by BSP */
+
+#define CONFIGURE_MALLOC_BSP_SUPPORTS_SBRK   /* <skf> 4/09 see shared/startup/sbrk.c and rtems/confdefs.h */
 
 /* uart.c uses out_8 instead of outb  */
 #define BSP_UART_IOBASE_COM1	GT64x60_DEV1_BASE + 0x20000

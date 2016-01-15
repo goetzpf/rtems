@@ -14,8 +14,8 @@
  *
  *      pci.h,v 1.2 2002/05/14 17:10:16 joel Exp
  *
- *      S. Kate Feng : Added support for Marvell and PLX. 3/5/2004.
-
+ *      S. Kate Feng : Added support for Marvell, Intell 82544EI and PLX. 3/5/2004.
+ *                     Added support for Intell 82545GM. 1/19/2014
  */
 
 #ifndef RTEMS_PCI_H
@@ -43,6 +43,8 @@
 #define PCI_DEVICE_ID_PLX2_PCI6154_HB2  0x26     /* <SKF> */
 
 #define PCI_DEVICE_INTEL_82544EI_COPPER	0x1008	/* <SKF> */
+#define PCI_DEVICE_INTEL_82545GM_COPPER 0x1026
+#define PCI_DEVICE_INTEL_82545GM_FIBER  0x1027
 
 struct _pin_routes
 {

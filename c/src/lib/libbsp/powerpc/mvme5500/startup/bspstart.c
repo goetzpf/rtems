@@ -19,7 +19,7 @@
  *
  *  Modified to support the MVME5500 board.
  *  Also, the settings of L1, L2, and L3 caches is not necessary here.
- *  (C) by Brookhaven National Lab., S. Kate Feng <feng1@bnl.gov>, 2003-2007
+ *  (C) by Brookhaven National Lab., S. Kate Feng <feng1@bnl.gov>, 2003-2009
  *  
  *  $Id$
  */
@@ -51,16 +51,18 @@
 #endif
 
 
-/*#define SHOW_MORE_INIT_SETTINGS
-#define CONF_VPD
+/*
+#define SHOW_MORE_INIT_SETTINGS
 #define SHOW_LCR1_REGISTER
 #define SHOW_LCR2_REGISTER
 #define SHOW_LCR3_REGISTER
+#define CONF_VPD
 */
 
 /* there is no public Workspace_Free() variant :-( */
 #include <rtems/score/wkspace.h>
 
+extern uint32_t probeMemoryEnd(void); /* from shared/startup/probeMemoryEnd.c */
 BSP_output_char_function_type BSP_output_char = BSP_output_char_via_serial;
 
 extern void _return_to_ppcbug(void);
@@ -71,7 +73,7 @@ extern Triv121PgTbl BSP_pgtbl_setup(unsigned long);
 extern void BSP_pgtbl_activate(Triv121PgTbl);
 extern int I2Cread_eeprom(unsigned char I2cBusAddr, uint32_t devA2A1A0, uint32_t AddrBytes, unsigned char *pBuff, uint32_t numBytes);
 extern void BSP_vme_config(void);
-extern uint32_t probeMemoryEnd();
+extern unsigned char ReadConfVPD_buff(int offset);
 
 uint32_t bsp_clicks_per_usec;
 
@@ -119,7 +121,7 @@ unsigned int BSP_processor_frequency;
  * Time base divisior (how many tick for 1 second).
  */
 unsigned int BSP_time_base_divisor;
-unsigned char ConfVPD_buff[200];
+static unsigned char ConfVPD_buff[200];
 
 #define CMDLINE_BUF_SIZE  2048
 
@@ -266,10 +268,13 @@ void bsp_start( void )
   setdbat(2, PCI0_MEM_BASE, PCI0_MEM_BASE, 0x10000000, IO_PAGE);
 
   /* Till Straumann: 2004
-   * map the PCI 0, 1 Domain I/O space, GT64260B registers,
+   * map the PCI 0, 1 Domain I/O space, GT64260B registers
+   * and the reserved area so that the size is the power of 2.
+   * 2009 : map the entire 256 M space
    * Flash Bank 0 and Flash Bank 2.
    */
   setdbat(3,PCI0_IO_BASE, PCI0_IO_BASE, 0x10000000, IO_PAGE);
+
 
   /*
    * Get CPU identification dynamically. Note that the get_ppc_cpu_type() function

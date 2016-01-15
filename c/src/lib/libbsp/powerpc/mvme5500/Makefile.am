@@ -44,7 +44,7 @@ console_SOURCES = ../../powerpc/shared/console/uart.c \
 
 include_bsp_HEADERS += pci/gtpcireg.h pci/pci.h
 pci_SOURCES = pci/pci.c pci/pci_interface.c pci/detect_host_bridge.c \
-    pci/pcifinddevice.c
+    pci/pcifinddevice.c pci/BSP_pciFindDevice.c
 
 include_bsp_HEADERS += irq/irq.h
 irq_SOURCES = irq/irq_init.c irq/BSP_irq.c 
